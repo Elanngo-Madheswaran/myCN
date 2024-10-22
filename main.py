@@ -1,7 +1,7 @@
 from flask import Flask, request, render_template
 from flask_socketio import SocketIO
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 import subprocess
 
 app = Flask(__name__)
@@ -11,11 +11,25 @@ def log_ip_addresses(ip_addresses):
     conn = sqlite3.connect('ip_log.db')
     c = conn.cursor()
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # Mark all devices as inactive
+    c.execute('UPDATE ip_log SET active_status = 0')
+
     for device in ip_addresses:
         ip = device.get('ip')
         mac = device.get('mac', 'N/A')
         active_status = 1  # Assume the device is active since we found it
-        time_span = device.get('time_span', 0)
+        time_span = 0
+
+        # Check the last timestamp for this IP address
+        c.execute('SELECT timestamp, time_span FROM ip_log WHERE ip_address = ?', (ip,))
+        row = c.fetchone()
+        if row:
+            last_timestamp = datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S')
+            previous_time_span = row[1]
+            if datetime.now() - last_timestamp <= timedelta(minutes=5):
+                time_span = previous_time_span + (datetime.now() - last_timestamp).seconds // 60
+
         c.execute('''
             INSERT INTO ip_log (timestamp, ip_address, mac_address, active_status, time_span)
             VALUES (?, ?, ?, ?, ?)
@@ -23,7 +37,7 @@ def log_ip_addresses(ip_addresses):
                 timestamp=excluded.timestamp,
                 mac_address=excluded.mac_address,
                 active_status=excluded.active_status,
-                time_span=ip_log.time_span + 1
+                time_span=excluded.time_span
         ''', (timestamp, ip, mac, active_status, time_span))
     conn.commit()
     conn.close()
