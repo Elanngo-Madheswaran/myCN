@@ -7,17 +7,18 @@ def initialize_db():
     conn = sqlite3.connect('ip_log.db')
     c = conn.cursor()
     c.execute('''
-        CREATE TABLE IF NOT EXISTS ip_log (
+        CREATE TABLE ip_log (
             ip_address TEXT PRIMARY KEY,
-            mac_address TEXT DEFAULT 'N/A',
-            active_status INTEGER DEFAULT 1,
-            time_span INTEGER DEFAULT 0,
-            last_seen TEXT,
-            timestamp TEXT
+            mac_address TEXT,
+            timestamp TEXT,
+            active_status INTEGER,
+            time_span INTEGER,
+            nickname TEXT  -- New column to store nicknames
         )
     ''')
     conn.commit()
     conn.close()
+
 
 # Log IP addresses and update time spans for existing devices
 def log_ip_addresses(ip_addresses):
@@ -64,3 +65,14 @@ def fetch_all_logs():
     data = c.fetchall()
     conn.close()
     return data
+
+# Clear all logs from the database
+def clear_all_logs():
+    conn = sqlite3.connect('ip_log.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM ip_log")
+    conn.commit()
+    conn.close()
+
+
+initialize_db()

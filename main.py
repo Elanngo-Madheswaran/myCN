@@ -7,41 +7,69 @@ import subprocess
 app = Flask(__name__)
 socketio = SocketIO(app)
 
+import math  # Import math to use ceil function
+
 def log_ip_addresses(ip_addresses):
-    conn = sqlite3.connect('ip_log.db')
-    c = conn.cursor()
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        with sqlite3.connect('ip_log.db') as conn:
+            c = conn.cursor()
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    # Mark all devices as inactive
-    c.execute('UPDATE ip_log SET active_status = 0')
+            # Mark all devices as inactive
+            c.execute('UPDATE ip_log SET active_status = 0')
 
-    for device in ip_addresses:
-        ip = device.get('ip')
-        mac = device.get('mac', 'N/A')
-        active_status = 1  # Assume the device is active since we found it
-        time_span = 0
+            for device in ip_addresses:
+                ip = device.get('ip')
+                mac = device.get('mac')
+                
+                # Only proceed if the MAC address exists
+                if not mac:
+                    continue
+                
+                # Assume the device is active since we found it
+                active_status = 1  
+                time_span = 0
+                nickname = None  # Initialize nickname as None
 
-        # Check the last timestamp for this IP address
-        c.execute('SELECT timestamp, time_span FROM ip_log WHERE ip_address = ?', (ip,))
-        row = c.fetchone()
-        if row:
-            last_timestamp = datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S')
-            previous_time_span = row[1]
-            if datetime.now() - last_timestamp <= timedelta(minutes=5):
-                time_span = previous_time_span + (datetime.now() - last_timestamp).seconds // 60
+                # Check the last timestamp for this IP address
+                c.execute('SELECT timestamp, time_span, nickname FROM ip_log WHERE ip_address = ?', (ip,))
+                row = c.fetchone()
+                
+                if row:
+                    last_timestamp = datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S')
+                    previous_time_span = row[1]
+                    nickname = row[2]  # Get the existing nickname if available
 
-        c.execute('''
-            INSERT INTO ip_log (timestamp, ip_address, mac_address, active_status, time_span)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(ip_address) DO UPDATE SET
-                timestamp=excluded.timestamp,
-                mac_address=excluded.mac_address,
-                active_status=excluded.active_status,
-                time_span=excluded.time_span
-        ''', (timestamp, ip, mac, active_status, time_span))
-    conn.commit()
-    conn.close()
-    socketio.emit('update', {'data': 'Database updated'})
+                    # Calculate the time difference in minutes
+                    time_difference = (datetime.now() - last_timestamp).total_seconds() / 60
+                    
+                    if time_difference <= 1:
+                        # Update time_span based on the last active period
+                        time_span = math.ceil(previous_time_span + time_difference)
+                    else:
+                        # If more than a minute has passed, reset time_span to current active duration
+                        time_span = 1  # Set to 1 minute for the current connection
+
+                else:
+                    # If no previous record exists, set time_span to 1 minute for new entries
+                    time_span = 1  
+
+                # Insert or update the record in the database
+                c.execute('''    
+                    INSERT INTO ip_log (ip_address, mac_address, timestamp, active_status, time_span, nickname)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(ip_address) DO UPDATE SET
+                        mac_address=excluded.mac_address,
+                        timestamp=excluded.timestamp,
+                        active_status=excluded.active_status,
+                        time_span=excluded.time_span,
+                        nickname=excluded.nickname
+                ''', (ip, mac, timestamp, active_status, time_span, nickname))
+            
+            conn.commit()
+            socketio.emit('update', {'data': 'Database updated'})
+    except Exception as e:
+        print(f'Error: {e}')
 
 @app.route('/log_ip_addresses', methods=['POST'])
 def log_ip_addresses_route():
@@ -49,6 +77,23 @@ def log_ip_addresses_route():
     ip_addresses = data.get('devices', [])
     log_ip_addresses(ip_addresses)
     return {'status': 'success'}, 200
+
+@app.route('/set_nickname', methods=['POST'])
+def set_nickname():
+    ip = request.form.get('ip')
+    nickname = request.form.get('nickname')
+
+    conn = sqlite3.connect('ip_log.db')
+    c = conn.cursor()
+    c.execute('UPDATE ip_log SET nickname = ? WHERE ip_address = ?', (nickname, ip))
+    conn.commit()
+    conn.close()
+
+    return {'status': 'success', 'nickname': nickname}  # Return JSON response
+
+
+
+
 
 @app.route('/')
 def index():
