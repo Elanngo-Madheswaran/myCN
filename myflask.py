@@ -20,21 +20,39 @@ def index():
 def log_ip_addresses(ip_addresses):
     conn = sqlite3.connect('ip_log.db')
     c = conn.cursor()
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    current_time = datetime.now()
+    timestamp = current_time.strftime('%Y-%m-%d %H:%M:%S')
+
     for device in ip_addresses:
         ip = device.get('ip')
         mac = device.get('mac', 'N/A')
-        active_status = device.get('active_status', 1)
-        time_span = device.get('time_span', 0)
-        c.execute('''
-            INSERT INTO ip_log (ip_address, mac_address, active_status, time_span, last_seen, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(ip_address) DO UPDATE SET
-                mac_address=excluded.mac_address,
-                active_status=excluded.active_status,
-                time_span=ip_log.time_span + 1,
-                last_seen=excluded.last_seen
-        ''', (ip, mac, active_status, time_span, timestamp, timestamp))
+        active_status = 1  # Assume the device is active since we found it
+
+        # Check if the device is already logged
+        c.execute('SELECT time_span, last_seen FROM ip_log WHERE ip_address = ?', (ip,))
+        row = c.fetchone()
+
+        if row:
+            previous_time_span = row[0]
+            last_seen = datetime.strptime(row[1], '%Y-%m-%d %H:%M:%S')
+            time_diff = (current_time - last_seen).total_seconds()
+
+            # Update time_span with the new duration since last seen
+            new_time_span = previous_time_span + int(time_diff)
+
+            c.execute('''
+                UPDATE ip_log
+                SET mac_address = ?, active_status = ?, time_span = ?, last_seen = ?, timestamp = ?
+                WHERE ip_address = ?
+            ''', (mac, active_status, new_time_span, timestamp, timestamp, ip))
+        else:
+            # Insert a new device if it's not already in the log
+            time_span = 0  # Set to 0 when inserting a new device
+            c.execute('''
+                INSERT INTO ip_log (ip_address, mac_address, active_status, time_span, last_seen, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (ip, mac, active_status, time_span, timestamp, timestamp))
+
     conn.commit()
     conn.close()
     socketio.emit('update', {'data': 'Database updated'})
@@ -71,8 +89,7 @@ def scheduled_task():
     log_ip_addresses(devices)
 
 if __name__ == '__main__':
-    initialize_db()  # Initialize the database if not done already
     scheduler = BackgroundScheduler()
-    scheduler.add_job(scheduled_task, 'interval', minutes=5)
+    scheduler.add_job(scheduled_task, 'interval', minutes=1)
     scheduler.start()
     socketio.run(app, debug=True)
