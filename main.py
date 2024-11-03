@@ -105,7 +105,7 @@ def index():
     return render_template('index.html', data=data)
 
 def run_nmap():
-    result = subprocess.run(['nmap', '-sn', '192.168.137.0/24'], capture_output=True, text=True, shell=True)
+    result = subprocess.run(['nmap', '-sn', '192.168.43.0/24'], capture_output=True, text=True, shell=True)
     return result.stdout
 
 def parse_nmap_output(output):
